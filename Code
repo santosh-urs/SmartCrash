@@ -1,0 +1,147 @@
+/******** MOTOR PINS ********/
+#define IN1 4
+#define IN2 5
+#define IN3 6
+#define IN4 9
+
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <Wire.h>
+#include <MPU6050.h>
+
+/******** MODULE CONNECTIONS ********/
+SoftwareSerial bt(8, 7);     // Bluetooth
+SoftwareSerial gsm(2, 3);    // GSM
+SoftwareSerial gpsSerial(10, 11); // GPS
+
+TinyGPSPlus gps;
+MPU6050 mpu;
+
+bool accidentDetected = false;
+
+/******** SETUP ********/
+void setup() {
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  bt.begin(9600);
+  gsm.begin(9600);
+  gpsSerial.begin(9600);
+
+  Wire.begin();
+  mpu.initialize();
+}
+
+/******** MOTOR FUNCTIONS ********/
+void forward() {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+}
+
+void backward() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+}
+
+void left() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+}
+
+void right() {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+}
+
+void stopCar() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+/******** GSM FUNCTIONS ********/
+void sendSMS(String msg) {
+  gsm.println("AT+CMGF=1");
+  delay(1000);
+
+  gsm.println("AT+CMGS=\"+91XXXXXXXXXX\""); // Replace number
+  delay(1000);
+
+  gsm.print(msg);
+  gsm.write(26);
+  delay(5000);
+}
+
+void makeCall() {
+  gsm.println("ATD+91XXXXXXXXXX;"); // Replace number
+  delay(15000);
+  gsm.println("ATH");
+}
+
+/******** GPS FUNCTION ********/
+String getLocation() {
+  unsigned long start = millis();
+
+  while (millis() - start < 15000) {
+    while (gpsSerial.available()) {
+      gps.encode(gpsSerial.read());
+    }
+
+    if (gps.location.isValid()) {
+      String link = "https://maps.google.com/?q=";
+      link += String(gps.location.lat(), 6);
+      link += ",";
+      link += String(gps.location.lng(), 6);
+      return link;
+    }
+  }
+  return "Location not available";
+}
+
+/******** ACCIDENT DETECTION ********/
+bool detectAccident() {
+  int16_t ax, ay, az;
+  mpu.getAcceleration(&ax, &ay, &az);
+
+  float Ax = ax / 16384.0;
+  float Ay = ay / 16384.0;
+  float Az = az / 16384.0;
+
+  float total = sqrt(Ax*Ax + Ay*Ay + Az*Az);
+
+  if (total > 4.0) {
+    delay(100);
+    return true;
+  }
+  return false;
+}
+
+/******** MAIN LOOP ********/
+void loop() {
+
+  // Bluetooth control
+  if (bt.available() && !accidentDetected) {
+    char cmd = bt.read();
+
+    if (cmd == 'F') forward();
+    else if (cmd == 'B') backward();
+    else if (cmd == 'L') left();
+    else if (cmd == 'R') right();
+    else if (cmd == 'S') stopCar();
+  }
+
+  // Accident detection
+  if (!accidentDetected && detectAccident()) {
+    accidentDetected = true;
+
+    stopCar();
+
+    String location = getLocation();
+    String msg = "ACCIDENT DETECTED!\n" + location;
+
+    sendSMS(msg);
+    delay(2000);
+    makeCall();
+  }
+}
